@@ -1,16 +1,11 @@
 ---
 name: swift-testing
 description: >
-  Swift Testing framework expert. Corrects wrong XCTest patterns in Swift Testing code.
-  TRIGGER when: code uses import Testing, @Test, @Suite, #expect, #require, Tag,
-  confirmation(), withKnownIssue, .serialized, .timeLimit, .tags(), .enabled(), .disabled(),
-  .bug(), CustomTestStringConvertible, TestTrait, SuiteTrait, TestScoping, Attachment,
-  Test.cancel, Issue.Severity, processExitsWith, AttachableAsImage;
-  user explicitly asks for Swift Testing or XCTest migration; test files use
-  struct-based test suites without XCTestCase; parameterized testing with arguments:.
-  DO NOT TRIGGER for: XCTest-only code (XCTestCase subclasses, XCTAssert, setUp/tearDown)
-  unless user is migrating to Swift Testing; UI testing (XCUITest); performance testing
-  (XCTMetric); generic "write tests" requests in repos that use XCTest.
+  Swift Testing framework expert. TRIGGER when code imports Testing; uses @Test, @Suite,
+  #expect, #require, Tag, confirmation(), withKnownIssue, traits, Attachment, Test.cancel,
+  Issue, processExitsWith, AttachableAsImage, parameterized tests, or struct-based test suites;
+  or when user asks for Swift Testing or XCTest migration. DO NOT TRIGGER for XCTest-only code
+  unless migrating, XCUITest, XCTMetric, or generic XCTest test requests.
 ---
 
 # Swift Testing (`import Testing`)
