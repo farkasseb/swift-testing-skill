@@ -15,7 +15,7 @@ struct OrderedTests {
 }
 ```
 
-**Ordering:** Apple docs guarantee serial (non-parallel) execution within a suite. In practice, tests execute in source-file order (by line number), though this specific ordering is observed behavior, not a documented guarantee.
+**Ordering:** the API contract (ST-0003) guarantees serial (non-parallel, non-interleaved) execution within the suite — NOT declaration order. Source-file-order execution is observed behavior, not a guarantee; don't make test correctness depend on it. Prefer one test function with sequential steps over order-dependent sibling tests.
 
 **Scope rules:**
 - `.serialized` guarantees order only **within that suite**
@@ -44,7 +44,7 @@ func networkCall() async { ... }
 func longOperation() async { ... }
 ```
 
-Only `.minutes(_:)` is available — `TimeLimitTrait.Duration` enforces minute-based granularity (minimum 1 minute) to prevent flaky tests from overly-short timeouts. Applied per test case in parameterized tests (each case gets its own time limit).
+Only `.minutes(_:)` is available — `TimeLimitTrait.Duration` enforces minute-based granularity (minimum 1 minute) to prevent flaky tests from overly-short timeouts. Applied per test case in parameterized tests (each case gets its own time limit). Still true in Swift 6.4: `.timeLimit(.seconds(30))` does not compile (verified against Xcode 27 beta 2).
 
 ### .disabled
 
@@ -153,6 +153,8 @@ struct AuthTests { ... }
 ### Running by tag
 
 In Xcode: Tests Navigator → filter by tag.
+
+On the command line there is **no tag filtering yet**: `swift test --filter`/`--skip` match test names only. `--skip tag:uiTest` syntax (ST-0025) is in review as of mid-2026, not shipped — don't suggest it.
 
 ## Comments as Documentation
 

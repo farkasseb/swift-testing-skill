@@ -22,15 +22,20 @@
 | `XCTAssertNil(x)` | `#expect(x == nil)` | |
 | `XCTAssertNotNil(x)` | `#expect(x != nil)` | |
 | `XCTUnwrap(x)` | `try #require(x)` | Returns unwrapped value |
-| `XCTAssertThrowsError` | `#expect(throws: Type.self) { }` | Returns the error for inspection (ST-0006) |
+| `XCTAssertThrowsError` | `#expect(throws: Type.self) { }` | Returns the error for inspection (ST-0006, Swift 6.1+) |
 | `XCTAssertNoThrow` | `#expect(throws: Never.self) { }` | |
 | `XCTExpectFailure` | `withKnownIssue { }` | Fails when issue is fixed |
 | `XCTSkip` / `XCTSkipIf` | `.disabled()` / `.enabled(if:)` (pre-start) or `try Test.cancel()` (runtime, Swift 6.3) | |
 | `XCTestExpectation` | `confirmation()` | Block-scoped |
 | `waitForExpectations(timeout:)` | (built into confirmation) | |
-| `XCTFail("msg")` | `Issue.record("msg")` | |
+| `XCTFail("msg")` | `Issue.record("msg")` | Or promote to `#expect`/`try #require` where the guard shape allows |
+| `XCTAttachment` + `add(_:)` | `Attachment.record(value, named:)` | Images directly since Swift 6.3 (`as: .png`) |
 | `addTeardownBlock { }` | `deinit` or custom `TestScoping` trait | |
 | `measure { }` | Not available | Use XCTest for perf tests |
+
+**Test naming:** drop the `test` prefix. For multi-word names that read like a sentence, prefer a raw identifier (SE-0451, **Swift 6.2+** — use `@Test("display name")` on older toolchains) — Apple's own migration guidance uses this style: `func testEngineDoesNotStall()` → ``@Test func `Engine does not stall`()``.
+
+**`continueAfterFailure = false`:** every subsequent assertion in the affected scope must become `try #require(...)`, not `#expect(...)` — `#expect` continues on failure, which silently changes test semantics. If it was set in `setUp`, this applies to all assertions in all migrated test methods of that class.
 
 ## Key Differences
 
@@ -119,9 +124,19 @@ func loginWithValidCredentials() { ... }
 - **Same type:** Cannot mix — a type is either `XCTestCase` or `@Suite`, never both
 - **No `@Test` in XCTestCase:** Don't add `@Test` to methods in an `XCTestCase` subclass
 
-### Cross-Framework Interoperability (ST-0021 — Accepted, not yet shipped)
+### Cross-Framework Interoperability (ST-0021 — shipped in Swift 6.4)
 
-ST-0021 will add formal runtime interop so XCTAssert\* works inside @Test functions and vice versa. **Until it ships, XCTAssert\* inside @Test is silently ignored — a false negative.** Always use `#expect`/`#require` in @Test functions.
+Behavior of an `XCTAssert*` failure inside a `@Test` function, verified by running tests on both toolchains:
+
+| Toolchain / mode | Result |
+|---|---|
+| Swift ≤ 6.3 | **Silently ignored — test passes.** False negative. |
+| Swift 6.4, Limited mode (default when `swift-tools-version` < 6.4) | Passes **with warnings** ("Issue recorded" + "An API was misused") — visible, still a false negative |
+| Swift 6.4, Complete mode (`swift-tools-version` ≥ 6.4, or `SWIFT_TESTING_XCTEST_INTEROP_MODE=complete`) | **Fails the test** — real interop |
+
+The mode is controlled by `SWIFT_TESTING_XCTEST_INTEROP_MODE` (`none`/`limited`/`complete`/`strict`; strict turns misuse into `fatalError`). Interop also works the other direction in Complete mode: `#expect`, `Issue.record()`, `withKnownIssue`, and `Test.cancel()` function inside `XCTestCase` methods. `XCTSkip`, `XCTestExpectation`, `XCTWaiter`, and traits remain non-interoperable.
+
+Regardless of mode: always use `#expect`/`#require` in `@Test` functions. Interop is a migration safety net, not a style.
 
 ## Migration Tips
 

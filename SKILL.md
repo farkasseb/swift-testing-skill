@@ -3,14 +3,17 @@ name: swift-testing
 description: >
   Swift Testing framework expert. TRIGGER when code imports Testing; uses @Test, @Suite,
   #expect, #require, Tag, confirmation(), withKnownIssue, traits, Attachment, Test.cancel,
-  Issue, processExitsWith, AttachableAsImage, parameterized tests, or struct-based test suites;
-  or when user asks for Swift Testing or XCTest migration. DO NOT TRIGGER for XCTest-only code
-  unless migrating, XCUITest, XCTMetric, or generic XCTest test requests.
+  Issue, processExitsWith, AttachableAsImage, Transferable attachments, CustomTestReflectable,
+  parameterized tests, or struct-based test suites; when rerunning flaky tests (the
+  .repeating trait does NOT exist — consult this skill); when XCTAssert appears inside @Test
+  (behavior changed in Swift 6.4); or when user asks for Swift Testing or XCTest migration.
+  DO NOT TRIGGER for XCTest-only code unless migrating, XCUITest, XCTMetric, or generic
+  XCTest test requests.
 ---
 
 # Swift Testing (`import Testing`)
 
-Xcode 16+ | Swift 6.0+ (coverage through 6.3) | iOS 16+ (runtime backdeployed) | `import Testing`
+Xcode 16+ | Swift 6.0+ (coverage through 6.4 / Xcode 27) | `import Testing` | Deployment floor is set by the Xcode-bundled Testing.framework: iOS 14+ with Xcode 26.6, **iOS 17+ with Xcode 27** (verified via framework `minos`)
 
 ## Repo-Policy Override
 
@@ -121,13 +124,15 @@ Tests run in **parallel by default, in random order**. Tests that share mutable 
     @Test func recordThree() { shared.record("3") }      // may not run second
 }
 
-// CORRECT — use .serialized when order matters
+// CORRECT — use .serialized when tests share mutable state
 @Suite(.serialized) struct NumberEntry {
     let shared = SharedState.instance
     @Test func recordTwo() { shared.record("2") }
     @Test func recordThree() { shared.record("3") }
 }
 ```
+
+`.serialized` guarantees serial, non-interleaved execution (ST-0003) — it does NOT formally guarantee declaration order, even though tests currently run in source order. If steps genuinely depend on order, merge them into one test function.
 
 ### 7. Thinks `.serialized` prevents ALL parallelism
 
@@ -228,7 +233,15 @@ import Testing
 }
 ```
 
-**Note:** Until ST-0021 ships (accepted, not yet in a release), XCTAssert\* inside @Test is **silently ignored** — always use `#expect`/`#require`.
+**What actually happens depends on the toolchain (ST-0021, verified by running tests):**
+
+| Toolchain | `XCTAssert*` failure inside `@Test` |
+|---|---|
+| Swift ≤ 6.3 | **Silently ignored — test passes.** False negative. |
+| Swift 6.4, `swift-tools-version` < 6.4 (Limited interop, default for existing packages) | Test **passes with warnings** — visible, but still a false negative |
+| Swift 6.4, `swift-tools-version` ≥ 6.4, or `SWIFT_TESTING_XCTEST_INTEROP_MODE=complete` | Test **fails** — real interop |
+
+So on most existing packages the danger persists even on Swift 6.4. Always use `#expect`/`#require`; treat any interop warning in test output as a migration TODO, not a safety net.
 
 ### 13. Doesn't know `withKnownIssue`
 
@@ -254,6 +267,10 @@ import Testing
 
 // CORRECT — drop prefix, use display name
 @Test("User can log in") func login() { ... }
+
+// ALSO CORRECT — raw identifier for sentence-style names (SE-0451, Swift 6.2+;
+// Apple's preferred style in its own migration guidance)
+@Test func `User can log in`() { ... }
 ```
 
 ### 15. Drops `@testable import` when accessing internal types
@@ -307,11 +324,22 @@ import Testing
 7. Check NO error thrown → `#expect(throws: Never.self) { try code() }`
 8. Record unconditional failure → `Issue.record("message")`
 9. Record non-failing warning (Swift 6.3) → `Issue.record("msg", severity: .warning)`
-10. Cancel running test (Swift 6.3) → `try Test.cancel("reason")`
+10. Cancel running test (Swift 6.3) → `try Test.cancel("reason")` — in a parameterized test this cancels only the current case
+11. Attach evidence to results → `Attachment.record(value, named:)`; images directly since Swift 6.3 (`Attachment.record(image, named:as: .png)`); `Transferable` types via `try await Attachment(exporting:as:)` (Swift 6.4, iOS 18.2+/macOS 15.2+)
+12. Rerun a flaky test until it fails → `swift test --repeat-until fail --maximum-repetitions N` (Swift 6.4 CLI). There is NO `.repeating` trait.
+
+## Doesn't Exist (Do Not Invent)
+
+Plausible-sounding APIs that are NOT shipped — verified against Swift 6.4 (Xcode 27 beta 2):
+
+- **`.repeating(...)` trait** — repetition is CLI-only (`--maximum-repetitions`, `--repeat-until`, Swift 6.4, per-test-case semantics per ST-0024). The trait is a future direction in the proposal, nothing more.
+- **`.savingAttachments(if: .testFails)` / `AttachmentSavingTrait`** — ST-0018 was *returned for revision*, not accepted. Attachments cannot be conditionally saved.
+- **`swift test --skip tag:uiTest`** — tag-based CLI filtering (ST-0025) is in review, not shipped. `--filter`/`--skip` match test names only.
+- **`.timeLimit(.seconds(30))`** — still minutes-only in Swift 6.4 (verified: does not compile). Minimum granularity is `.minutes(1)`.
 
 ## Routing: When to Read Each Reference
 
-- **Core API (@Test, @Suite, #expect, #require, confirmation, withKnownIssue, exit testing, Test.cancel, Issue.Severity)** → [references/api-reference.md](references/api-reference.md)
+- **Core API (@Test, @Suite, #expect, #require, confirmation, withKnownIssue, exit testing, Test.cancel, Issue.Severity, attachments incl. images/Transferable, CustomTestReflectable, repetitions)** → [references/api-reference.md](references/api-reference.md)
 - **Traits (.serialized, .timeLimit, .disabled, .bug, .enabled), Tags, custom traits** → [references/traits-and-tags.md](references/traits-and-tags.md)
 - **Migrating from XCTest (assertion mapping, setUp→init, full table)** → [references/xctest-migration.md](references/xctest-migration.md)
 - **Parameterized tests (arguments:, static props, zip, max 2 collections, CustomTestStringConvertible)** → [references/parameterized-testing.md](references/parameterized-testing.md)
@@ -327,7 +355,7 @@ import Testing
 - `#require` always needs `try` — it throws on failure
 - Parameterized test argument collections must be `Sendable`; instance members are unavailable in `arguments:` (no suite instance exists yet) — use `static` properties, literals, or `try`/`await` expressions
 - Tags must be declared via `extension Tag { @Tag static var name: Self }` — no string literals
-- Never mix XCTest assertion APIs (`XCTAssert*`) inside `@Test` functions (currently silently ignored; ST-0021 will add interop but prefer `#expect`/`#require`)
+- Never mix XCTest assertion APIs (`XCTAssert*`) inside `@Test` functions. On Swift ≤6.3 failures are silently ignored; on Swift 6.4 they fail the test only under Complete interop mode (`swift-tools-version` ≥ 6.4 or `SWIFT_TESTING_XCTEST_INTEROP_MODE=complete`) — otherwise they're just warnings (ST-0021, verified)
 - Never wrap async test code in `Task { }` — mark the function `async` instead
 - Never wrap a failing test in `withKnownIssue` to silence a red build — only use it when the user explicitly asks to suppress a known bug
 - Use `@testable import ModuleName` when tests need `internal` symbols; plain `import` when public API suffices — `@testable` does not expose `private`/`fileprivate`

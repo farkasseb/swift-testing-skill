@@ -133,7 +133,7 @@ let data = try #require(await fetchOptional())
 
 ### Inspect the thrown error (ST-0006)
 
-`#expect(throws:)` and `#require(throws:)` **return the thrown error** for further inspection. The old error matcher closure is deprecated.
+`#expect(throws:)` and `#require(throws:)` **return the thrown error** for further inspection (Swift 6.1+, ST-0006). The old error matcher closure is deprecated.
 
 ```swift
 // #require returns non-optional — stops test if wrong error
@@ -239,7 +239,7 @@ withKnownIssue {
 }
 ```
 
-**Key behavior:** If no failure occurs inside `withKnownIssue`, the test records "Known issue was not recorded" — this signals the underlying bug is fixed.
+**Key behavior:** If no failure occurs inside `withKnownIssue`, the test records "Known issue was not recorded" — this signals the underlying bug is fixed. Exception: with `isIntermittent: true`, no such secondary issue is recorded when the failure doesn't occur.
 
 ## confirmation()
 
@@ -263,7 +263,7 @@ await confirmation(expectedCount: 3) { confirm in
     sut.processItems([a, b, c])
 }
 
-// Range-based count
+// Range-based count (Swift 6.1+, ST-0005)
 await confirmation(expectedCount: 1...5) { confirm in
     sut.onEvent { confirm() }
 }
@@ -347,4 +347,72 @@ Attach data to test results for debugging.
 }
 ```
 
-Types can conform to `Attachable` for custom serialization.
+Types can conform to `Attachable` for custom serialization. `Codable` and `NSSecureCoding` types get the serialization implementation **for free** via Foundation — but the conformance itself must still be declared (`struct Payload: Codable, Attachable {}`); a bare `Codable` type does not compile when attached (verified — "requires that 'Payload' conform to 'Attachable'").
+
+### Image Attachments (Swift 6.3, ST-0014/ST-0017)
+
+`UIImage`, `NSImage`, `CGImage`, and `CIImage` attach **directly** — no manual PNG encoding:
+
+```swift
+@Test func rendersCorrectly() throws {
+    let screenshot: UIImage = render()
+    Attachment.record(screenshot, named: "rendered view", as: .png)
+    Attachment.record(screenshot, named: "compressed", as: .jpeg(withEncodingQuality: 0.8))
+}
+```
+
+- The unified protocol is **`AttachableAsImage`** (ST-0017 consolidated the earlier platform-specific `AttachableAsCGImage` name before release — don't cite the old name).
+- `AttachableImageFormat`: `.png`, `.jpeg`, `.jpeg(withEncodingQuality:)`, or `init(contentType:encodingQuality:)` with a `UTType`.
+- Apple platforms: `@available(macOS 11, iOS 14, watchOS 7, tvOS 14)`. Windows supported via WIC (`HBITMAP`/`HICON`).
+- Verified: compiles on Swift 6.3.3 (Xcode 26.6).
+
+### Transferable Attachments (Swift 6.4, ST-0023)
+
+Types conforming to `CoreTransferable.Transferable` attach via a dedicated **async throwing** initializer — not the synchronous `record` family:
+
+```swift
+@Test func exportsMenu() async throws {
+    let attachment = try await Attachment(exporting: menu, as: .pdf, named: "menu.pdf")
+    Attachment.record(attachment)
+}
+```
+
+Requires Swift 6.4 **and** `@available(macOS 15.2, iOS 18.2, tvOS 18.2, watchOS 11.2, visionOS 2.2)` — the runtime gate comes from CoreTransferable, unlike most Swift Testing APIs which only need the toolchain. On older OS floors, encode manually and attach the `Data`.
+
+### Not Shipped: Conditional Attachment Saving
+
+`AttachmentSavingTrait` / `.savingAttachments(if: .testFails)` (ST-0018) was **returned for revision** — do not present it as API. All recorded attachments are saved unconditionally.
+
+## CustomTestReflectable (Swift 6.4, ST-0022)
+
+Provide a test-only `Mirror` for the value breakdown shown on `#expect` failures — separate from `CustomReflectable`, so production reflection is untouched:
+
+```swift
+extension MonsterTruck: CustomTestReflectable {
+    var customTestMirror: Mirror {
+        Mirror(self, children: ["name": name, "wheels": wheels])
+    }
+}
+```
+
+Swift Testing checks `CustomTestReflectable` first, then falls back to regular reflection. Also since Swift 6.4, the expanded failure value breakdown appears in `swift test` console output, not just Xcode. Verified: compiles on 6.4, not on 6.3.3.
+
+## Per-Test-Case Repetitions (Swift 6.4, ST-0024)
+
+Rerun tests via the CLI — **there is no trait for this**:
+
+```bash
+swift test --repeat-until fail --maximum-repetitions 100   # hunt a flaky test
+swift test --repeat-until pass --maximum-repetitions 3     # retry known-flaky
+swift test --maximum-repetitions 10                        # unconditional repeats
+```
+
+Since 6.4, only the matching test cases re-run (previously the whole target re-ran). A `.repeating(...)` trait and `Test.currentIteration` are future directions in the proposal — they do not exist.
+
+## SourceLocation.filePath (Swift 6.3, ST-0020)
+
+`SourceLocation` exposes `filePath` alongside `fileID`/`line`/`column`. When constructing one manually, use the full public initializer — never the underscored `#_sourceLocation` macro:
+
+```swift
+let loc = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+```

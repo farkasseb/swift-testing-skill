@@ -75,7 +75,7 @@ await confirmation(expectedCount: 3) { confirm in
     sut.processItems([a, b, c])
 }
 
-// Expect at least 1 but no more than 5
+// Expect at least 1 but no more than 5 (ranges: Swift 6.1+, ST-0005)
 await confirmation(expectedCount: 1...5) { confirm in
     sut.onEvent { confirm() }
 }
@@ -146,7 +146,7 @@ struct OrderedTests {
 }
 ```
 
-**Ordering:** Apple docs guarantee serial execution. In practice, tests run top to bottom by source line number, though this ordering behavior is observed, not formally documented.
+**Ordering:** the API contract (ST-0003) guarantees only serial, non-interleaved execution — NOT declaration order. In practice tests run top to bottom by source line, but that's observed implementation behavior, not a guarantee. Don't design tests whose correctness depends on it: prefer merging ordered steps into one test function (or calling helpers in sequence). Use `.serialized` to prevent shared-state interference, not to encode step ordering.
 
 ### Scope of .serialized
 

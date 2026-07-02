@@ -1,0 +1,78 @@
+{
+  "skill_name": "swift-testing",
+  "design_note": "Each eval targets a knowledge delta (Swift 6.3/6.4 Swift Testing changes or verified behavioral traps), not reasoning ability. A competent model without the skill gives a confidently wrong answer from stale training data. Runner rule: executors must not use web search or documentation MCP tools, so the measured delta is the skill's contribution. The ST-0021 interop matrix and the negative claims (.repeating trait, .timeLimit seconds) were verified empirically against Swift 6.3.3 and 6.4 toolchains.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "xctassert-interop-trap",
+      "prompt": "We're mid-migration from XCTest to Swift Testing and some @Test functions still call XCTAssertEqual inside them. We just updated to Xcode 27 (Swift 6.4), but our Package.swift still says swift-tools-version: 6.0. Are failures from those XCTAssertEqual calls actually failing our tests? If not, how do we make them count without migrating everything today?",
+      "expected_output": "Explains the ST-0021 interop modes: with tools-version < 6.4 the default is Limited mode where XCTAssert failures produce warnings but the test still passes; Complete mode (tools-version >= 6.4 or SWIFT_TESTING_XCTEST_INTEROP_MODE=complete) makes them real failures; recommends #expect/#require as the durable fix",
+      "files": [],
+      "expectations": [
+        "States that with swift-tools-version < 6.4 on Swift 6.4 the XCTAssert failures do NOT fail the test by default (they surface as warnings under Limited interop mode, or are ignored on older toolchains) — an answer claiming they simply fail, or that they are still completely silent on this setup, fails this assertion",
+        "Names a working mechanism to make them count: raising swift-tools-version to 6.4+ or setting SWIFT_TESTING_XCTEST_INTEROP_MODE=complete (ST-0021 interop modes)",
+        "Recommends migrating the assertions to #expect/#require as the proper fix rather than relying on interop"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "image-attachment",
+      "prompt": "In a Swift Testing test I want to attach a UIImage screenshot to the test results when my snapshot comparison fails, so I can see what was rendered. We're on Xcode 26.6 (Swift 6.3). What's the right way to do this?",
+      "expected_output": "Attachment.record(image, named:as: .png) — images attach directly since Swift 6.3 (ST-0014/0017, AttachableAsImage); no manual PNG encoding needed",
+      "files": [],
+      "expectations": [
+        "Recommends attaching the UIImage directly via the Attachment API with an image format (e.g. Attachment.record(screenshot, named:, as: .png)) as available in Swift 6.3",
+        "Does not present manually encoding the image to Data (pngData()/jpegData()) as the required or primary approach",
+        "Mentions format control (AttachableImageFormat / .png / .jpeg with encoding quality) or the correct availability context (Swift 6.3 toolchain; iOS 14+ floor)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "repeating-trait-trap",
+      "prompt": "I have a flaky Swift Testing test and I want to run it repeatedly until it fails so I can catch it in the act. I remember something like @Test(.repeating(.untilFailure, maximumIterations: 100)) — what's the exact trait syntax? We're on Xcode 27.",
+      "expected_output": "No .repeating trait exists — repetition is CLI-only in Swift 6.4: swift test --repeat-until fail --maximum-repetitions 100 (ST-0024, per-test-case semantics)",
+      "files": [],
+      "expectations": [
+        "Clearly states that no .repeating trait exists in Swift Testing (it is only a future direction in ST-0024) — an answer providing any trait-based repetition syntax fails this assertion",
+        "Provides the actual mechanism: swift test --repeat-until fail (and/or --maximum-repetitions N), available in Swift 6.4",
+        "Does not invent other non-existent APIs (e.g. Test.currentIteration, a repetition parameter on @Test) as available"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "mid-test-skip",
+      "prompt": "In XCTest I could `throw XCTSkip(\"server unreachable\")` in the middle of a test when a runtime precondition wasn't met. What's the Swift Testing equivalent for bailing out of an already-running test? Swift 6.3 toolchain. Also: what happens if I do this inside a parameterized test?",
+      "expected_output": "try Test.cancel(\"reason\") — ST-0016, Swift 6.3; in parameterized tests it cancels only the current test case; .disabled(if:)/.enabled(if:) remain the pre-start alternatives",
+      "files": [],
+      "expectations": [
+        "Recommends try Test.cancel(\"reason\") as the runtime equivalent, available since Swift 6.3 (ST-0016)",
+        "States that in a parameterized test, Test.cancel cancels only the current test case while other cases continue",
+        "Distinguishes it from pre-start conditions (.disabled(if:) / .enabled(if:)) which prevent the test from starting at all"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "issue-severity-warning",
+      "prompt": "I want to log a non-fatal warning from inside a Swift Testing test — something visible in the test results, but that doesn't fail the test (e.g. 'image match 93%, above threshold but not identical'). Is that possible? Swift 6.3 toolchain.",
+      "expected_output": "Issue.record(\"message\", severity: .warning) — ST-0013, Swift 6.3; warnings appear in results without failing the test; default severity is .error which fails",
+      "files": [],
+      "expectations": [
+        "States it is possible via Issue.record with severity: .warning, available since Swift 6.3 (ST-0013) — an answer claiming all recorded issues fail the test fails this assertion",
+        "Explains the warning appears in test results but the test still passes",
+        "Notes the default severity is .error (which fails the test) or mentions the isFailure distinction"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "transferable-attachment",
+      "prompt": "My document type conforms to Transferable (CoreTransferable) and can export PDF. Can I attach it to a Swift Testing test result directly, and what are the exact version requirements — toolchain and OS?",
+      "expected_output": "Yes — try await Attachment(exporting:as:) (ST-0023, Swift 6.4), async throwing initializer; OS floor iOS 18.2/macOS 15.2 from CoreTransferable; on older floors encode manually and attach Data",
+      "files": [],
+      "expectations": [
+        "States that direct Transferable attachment exists via an async throwing Attachment initializer (Attachment(exporting:as:)), added in Swift 6.4 (ST-0023) — not the synchronous record family",
+        "States the OS availability floor (iOS 18.2 / macOS 15.2 era releases) in addition to the Swift 6.4 toolchain requirement",
+        "Offers a fallback for older deployment targets (export/encode manually and attach the resulting Data)"
+      ]
+    }
+  ]
+}
