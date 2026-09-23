@@ -1,14 +1,6 @@
 ---
 name: swift-testing
-description: >
-  Swift Testing framework expert. TRIGGER when code imports Testing; uses @Test, @Suite,
-  #expect, #require, Tag, confirmation(), withKnownIssue, traits, Attachment, Test.cancel,
-  Issue, processExitsWith, AttachableAsImage, Transferable attachments, CustomTestReflectable,
-  parameterized tests, or struct-based test suites; when rerunning flaky tests (the
-  .repeating trait does NOT exist — consult this skill); when XCTAssert appears inside @Test
-  (behavior changed in Swift 6.4); or when user asks for Swift Testing or XCTest migration.
-  DO NOT TRIGGER for XCTest-only code unless migrating, XCUITest, XCTMetric, or generic
-  XCTest test requests.
+description: "Swift Testing (import Testing), through Swift 6.4 / Xcode 27. Use for @Test, @Suite, #expect, #require, traits, Tag, confirmation(), withKnownIssue, parameterized tests, Attachment, Issue, AttachableAsImage, Transferable attachments, Test.cancel, processExitsWith, CustomTestReflectable. Covers flaky Swift Testing reruns (no .repeating trait exists), XCTAssert inside @Test (changed in 6.4), and migration from XCTest. Not for XCTest-only code unless migrating, XCUITest, or XCTMetric."
 ---
 
 # Swift Testing (`import Testing`)
