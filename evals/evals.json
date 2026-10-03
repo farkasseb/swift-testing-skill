@@ -1,6 +1,6 @@
 {
   "skill_name": "swift-testing",
-  "design_note": "Each eval targets a knowledge delta (Swift 6.3/6.4 Swift Testing changes or verified behavioral traps), not reasoning ability. A competent model without the skill gives a confidently wrong answer from stale training data. Runner rule: executors must not use web search or documentation MCP tools, so the measured delta is the skill's contribution. The ST-0021 interop matrix and the negative claims (.repeating trait, .timeLimit seconds) were verified empirically against Swift 6.3.3 and 6.4 toolchains.",
+  "design_note": "Focused prompts for API availability, false passes, migration semantics and scope. Use only the prompts affected by a guidance change; a few independent with-skill/without-skill spot checks are sufficient. Build and run generated tests separately where behavior matters. No web/documentation lookup during a skill-isolation spot check. tests/run.sh validates executable samples, not model performance.",
   "evals": [
     {
       "id": 1,
@@ -18,23 +18,24 @@
       "id": 2,
       "name": "image-attachment",
       "prompt": "In a Swift Testing test I want to attach a UIImage screenshot to the test results when my snapshot comparison fails, so I can see what was rendered. We're on Xcode 26.6 (Swift 6.3). What's the right way to do this?",
-      "expected_output": "Attachment.record(image, named:as: .png) — images attach directly since Swift 6.3 (ST-0014/0017, AttachableAsImage); no manual PNG encoding needed",
+      "expected_output": "Attachment.record(image, named:, as: .png) inside the failure branch of the comparison — images attach directly since Swift 6.3 (ST-0014/0017, AttachableAsImage); no manual PNG encoding; no failure-only attachment trait exists, so record conditionally",
       "files": [],
       "expectations": [
         "Recommends attaching the UIImage directly via the Attachment API with an image format (e.g. Attachment.record(screenshot, named:, as: .png)) as available in Swift 6.3",
         "Does not present manually encoding the image to Data (pngData()/jpegData()) as the required or primary approach",
-        "Mentions format control (AttachableImageFormat / .png / .jpeg with encoding quality) or the correct availability context (Swift 6.3 toolchain; iOS 14+ floor)"
+        "Mentions format control (AttachableImageFormat / .png / .jpeg with encoding quality) or the correct availability context (Swift 6.3 toolchain; iOS 14+ floor)",
+        "Records the attachment only when the snapshot comparison fails (for example inside an if/else on the comparison result), as the prompt asks; does not invent a trait or option that saves attachments only for failing tests"
       ]
     },
     {
       "id": 3,
       "name": "repeating-trait-trap",
       "prompt": "I have a flaky Swift Testing test and I want to run it repeatedly until it fails so I can catch it in the act. I remember something like @Test(.repeating(.untilFailure, maximumIterations: 100)) — what's the exact trait syntax? We're on Xcode 27.",
-      "expected_output": "No .repeating trait exists — repetition is CLI-only in Swift 6.4: swift test --repeat-until fail --maximum-repetitions 100 (ST-0024, per-test-case semantics)",
+      "expected_output": "No .repeating trait exists. Use Xcode's test repetition (test plan or scheme test options, e.g. repeat until failure) or, in Swift 6.4, swift test --repeat-until fail --maximum-repetitions 100 (ST-0024, per-test-case semantics)",
       "files": [],
       "expectations": [
         "Clearly states that no .repeating trait exists in Swift Testing (it is only a future direction in ST-0024) — an answer providing any trait-based repetition syntax fails this assertion",
-        "Provides the actual mechanism: swift test --repeat-until fail (and/or --maximum-repetitions N), available in Swift 6.4",
+        "Provides a real mechanism: Xcode's test repetition options (test plan or scheme, until failure) and/or swift test --repeat-until fail --maximum-repetitions N (Swift 6.4)",
         "Does not invent other non-existent APIs (e.g. Test.currentIteration, a repetition parameter on @Test) as available"
       ]
     },
@@ -72,6 +73,79 @@
         "States that direct Transferable attachment exists via an async throwing Attachment initializer (Attachment(exporting:as:)), added in Swift 6.4 (ST-0023) — not the synchronous record family",
         "States the OS availability floor (iOS 18.2 / macOS 15.2 era releases) in addition to the Swift 6.4 toolchain requirement",
         "Offers a fallback for older deployment targets (export/encode manually and attach the resulting Data)"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "migrate-xctestcase",
+      "prompt": "Migrate this XCTest class to Swift Testing. Keep its behavior identical.\n\n```swift\nimport XCTest\n@testable import Shop\n\nfinal class CartTests: XCTestCase {\n    var cart: Cart!\n\n    override func setUp() {\n        continueAfterFailure = false\n        cart = Cart()\n    }\n\n    override func tearDown() {\n        PriceCache.shared.reset()\n    }\n\n    func testTotalIncludesTax() throws {\n        try XCTSkipUnless(ProcessInfo.processInfo.isOperatingSystemAtLeast(.init(majorVersion: 26, minorVersion: 0, patchVersion: 0)))\n        cart.add(Item(price: 10))\n        XCTAssertEqual(cart.total, 10.8, accuracy: 0.001)\n        XCTAssertEqual(cart.items.count, 1)\n    }\n\n    func testCheckoutCallsBack() {\n        let exp = expectation(description: \"checkout\")\n        cart.checkout { result in\n            XCTAssertNotNil(try? result.get())\n            exp.fulfill()\n        }\n        wait(for: [exp], timeout: 5)\n    }\n}\n```",
+      "expected_output": "Teardown still resets PriceCache.shared (deinit on a final class or actor suite, or an equivalent scope such as a TestScoping trait); every parallel user of PriceCache.shared is grouped under one serialized parent or given an independent resource, and per-suite .serialized is not presented as global isolation; cart becomes a non-optional stored property; continueAfterFailure = false turns every assertion into try #require; the OS skip becomes @available; the finite-value accuracy check keeps its absolute tolerance; the callback test awaits the result with the original 5-second bound preserved (a cancellation-aware adapter that resumes exactly once on completion, timeout, or cancellation), or keeps that test in XCTest, and asserts outside the callback; test names drop the test prefix.",
+      "files": [],
+      "expectations": [
+        "Every assertion in the migrated tests uses try #require (not #expect), because continueAfterFailure = false was set in setUp, and the test functions are marked throws",
+        "Preserves teardown of shared state using deinit or an equivalent scope, and addresses every parallel user of PriceCache.shared; per-suite serialization alone must not be described as global isolation.",
+        "The OS-version skip becomes an @available attribute on the test (not .enabled(if:) with a runtime version check, not XCTSkip)",
+        "Uses an absolute tolerance comparison for these finite values, not a relative-tolerance substitute or an invented accuracy: parameter.",
+        "The checkout test awaits the callback result and asserts after it, not inside the callback, and not with a confirmation() whose closure returns before the callback fires",
+        "The checkout test keeps a bounded wait equivalent to the original 5-second timeout (for example a timeout adapter that resumes exactly once on completion, timeout, or cancellation), or explicitly keeps that test in XCTest; a bare withCheckedContinuation with no timeout, or relying on .timeLimit to unblock it, fails this assertion"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "keep-xctest-policy",
+      "prompt": "Add a unit test for `Formatter.currency(_:)` returning \"$1.00\" for 1. Here is the existing test file in the target:\n\n```swift\nimport XCTest\n@testable import Money\n\nfinal class FormatterTests: XCTestCase {\n    func testZero() {\n        XCTAssertEqual(Formatter.currency(0), \"$0.00\")\n    }\n}\n```",
+      "expected_output": "Adds an XCTest method (func testOne() { XCTAssertEqual(Formatter.currency(1), \"$1.00\") }) to the existing XCTestCase; does not introduce Swift Testing or add @Test inside the XCTestCase.",
+      "files": [],
+      "expectations": [
+        "Writes the new test as an XCTest method in the existing XCTestCase, using XCTAssertEqual",
+        "Does not add @Test, #expect, or import Testing to this file, and does not migrate the class unasked (mentioning migration as an option is fine)"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "xcode-project-interop",
+      "prompt": "Our iOS app is an Xcode project (no Package.swift for the test target). We build with Xcode 27. Some @Test functions still call XCTAssertEqual. If one of those assertions fails, does the test fail? How do we make sure it does?",
+      "expected_output": "No by default: in an Xcode project on Xcode 27 the interop mode is limited, so the test passes with warnings. Set SWIFT_TESTING_XCTEST_INTEROP_MODE=complete in the scheme or test plan environment (or the process environment TEST_RUNNER_SWIFT_TESTING_XCTEST_INTEROP_MODE=complete xcodebuild test ...), and migrate to #expect/#require.",
+      "files": [],
+      "expectations": [
+        "States the test does not fail by default: the failure shows up as warnings and the test passes (limited interop mode) — an answer saying it fails, or that it is completely silent, fails this assertion",
+        "Gives SWIFT_TESTING_XCTEST_INTEROP_MODE=complete set in the scheme/test plan environment (or via a TEST_RUNNER_ prefixed process environment assignment before xcodebuild, not a trailing build setting) as the way to make it fail; does not claim swift-tools-version applies to an Xcode project target",
+        "Recommends replacing the XCTAssert calls with #expect/#require"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "try-await-placement",
+      "prompt": "Code review question: a teammate wrote `try #expect(parser.parse(input) == expected)` and `await #expect(store.count() == 3)` in Swift Testing tests. Another reviewer says these are wrong and must be written with try/await inside the parentheses. Who is right? Swift 6.4.",
+      "expected_output": "Both forms are valid: the #expect macro applies try/await written before it to the whole expression, and failures are reported normally. Inside-the-parentheses is equally fine. The one real restriction is try on the right side of == (#expect(try a() == try b()) does not compile).",
+      "files": [],
+      "expectations": [
+        "States that try/await placed before #expect compile and work correctly (the macro applies them to the expression) — an answer calling them compile errors or silently broken fails this assertion",
+        "Does not require rewriting the code; may mention the try-on-the-right-of-== restriction as the actual limitation"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "callback-assert-trap",
+      "prompt": "This Swift Testing test is green but I suspect it tests nothing. Is it fine?\n\n```swift\n@Test func loadsProfile() {\n    sut.loadProfile { profile in\n        #expect(profile.name == \"Ada\")\n    }\n}\n```\n\n`loadProfile` calls its completion asynchronously on a background queue.",
+      "expected_output": "No: the test returns before the asynchronous completion runs, so it can pass without observing the result. Make the test async and await the value (a bounded adapter or an async API), then assert outside the callback. confirmation() alone would not wait for an asynchronous callback.",
+      "files": [],
+      "expectations": [
+        "Explains the test can pass without observing the completion, because it returns before the asynchronous callback runs",
+        "Fixes it by making the test async and awaiting the result through an async API or a bounded, cancellation-aware callback adapter, then asserting after the await. A raw continuation with no missing-callback bound is insufficient.",
+        "Does not present a plain confirmation { } around the call as sufficient, since confirmation does not wait for a callback that fires after its closure returns"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "stateful-loop-migration",
+      "prompt": "Review this proposed XCTest migration. The old test constructs one Converter, loops over [1, 2, 3], changes a dependency stub each iteration, and asserts converter.currentValue equals the new stub value. The proposed @Test(arguments: [1, 2, 3]) creates a fresh Converter and stub for each case. All three cases pass. Is coverage preserved? Keep the existing correct try #expect(converter.read() == expected) syntax unchanged.",
+      "expected_output": "No. Fresh instances lose coverage for stale caching or failure to refresh across calls. Keep the sequence on one instance, or retain it alongside independent parameterized cases. The try-before-macro form is valid.",
+      "files": [],
+      "expectations": [
+        "Identifies lost same-instance repeated-call coverage and a concrete stale-cache mutant that fresh cases miss.",
+        "Preserves the sequence in one test or adds a sequence test rather than treating parameterized case count as parity.",
+        "Does not rewrite the valid try-before-#expect syntax."
       ]
     }
   ]

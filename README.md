@@ -1,92 +1,64 @@
 # Swift Testing Skill
 
-AI skill reference for Apple's Swift Testing framework (coverage through Swift 6.4 / Xcode 27) — corrects common XCTest mistakes AI models make with `@Test`, `#expect`, `#require`, `confirmation()`, and migration patterns, plus the Swift 6.3/6.4 additions models don't know: image and `Transferable` attachments, `Test.cancel()`, issue severity, `CustomTestReflectable`, per-test-case repetitions, and the ST-0021 XCTest interop behavior change.
+An agent skill for Apple's Swift Testing framework (`import Testing`), covering Swift 6.0-6.4 and Xcode 16-27. It works with any agent that reads the [Agent Skills](https://agentskills.io) format, including Claude Code and OpenAI Codex.
 
-**This skill is slightly opinionated — it favors Swift Testing over XCTest for new test targets, struct-based suites over class-based, `confirmation()` over callback-based patterns, and `withKnownIssue` over disabling tests. These opinions align with Apple's recommended direction, but existing XCTest codebases should stay on XCTest unless explicitly migrating.**
+It focuses on what coding agents get wrong: tests that compile but pass when they should fail (`Task { }` in a test, asserting inside a callback, `XCTAssert*` inside `@Test`), the scope of `.serialized`, invented APIs (a `.repeating` trait, sub-minute time limits), and Swift 6.1-6.4 additions such as exit tests, image and `Transferable` attachments, `Test.cancel`, issue severity, and `CustomTestReflectable`. For XCTest migrations it includes a compact mapping and corrects consequential gaps in Apple's `modernize-tests` recipes.
 
-## Why this exists
+The skill follows the repository's existing framework: it writes XCTest in XCTest targets unless asked to use Swift Testing or to migrate.
 
-AI models know Swift Testing exists, but they consistently generate wrong patterns. They fall back to XCTest boilerplate (`class FooTests: XCTestCase`), wrap async code in `Task { }` (which silently passes broken tests), use `XCTAssertThrowsError` instead of `#expect(throws:)`, reach for `XCTestExpectation` instead of `confirmation()`, and put `try`/`await` in the wrong place around macros.
+## Install
 
-These aren't subtle issues — they produce tests that compile but silently pass when they should fail, or fail with misleading diagnostics.
-
-### What AI models get wrong vs. what this skill corrects
-
-| Topic | What AI says (wrong) | What's actually correct |
-|-------|---------------------|------------------------|
-| Test structure | `class FooTests: XCTestCase` | `@Suite struct FooTests` with `@Test` methods |
-| Async testing | `Task { #expect(...) }` | Mark function `async` directly — `Task { }` silently passes |
-| Error assertions | `XCTAssertThrowsError` | `#expect(throws: MyError.self) { try foo() }` |
-| Async expectations | `XCTestExpectation` + `waitForExpectations` | `confirmation { confirm in ... }` |
-| `#require` usage | `let x = #require(opt)` | `let x = try #require(opt)` — `#require` throws |
-| `try`/`await` placement | `try #expect(foo())` | `#expect(try foo())` — inside the macro |
-| Tags | `.tags("networking")` | `.tags(.networking)` via `extension Tag` declaration |
-| Known failures | `.disabled("known bug")` | `withKnownIssue { }` — tracks without disabling |
-| XCTAssert inside @Test | "Silently ignored" or "works fine" | Toolchain-dependent (ST-0021): silent pass ≤6.3, warnings on 6.4 Limited mode, real failure on 6.4 Complete mode |
-| Image attachments | "Encode to PNG Data manually" | `Attachment.record(image, named:as: .png)` directly since Swift 6.3 |
-| Rerunning flaky tests | Invents a `.repeating(...)` trait | No trait exists — `swift test --repeat-until fail --maximum-repetitions N` (Swift 6.4 CLI) |
-| Skipping mid-test | "Not possible / use .disabled" | `try Test.cancel("reason")` since Swift 6.3; cancels only the current case in parameterized tests |
-
-## Installation
-
-### Claude Code (as a skill)
+Codex and other agents that read `~/.agents/skills`:
 
 ```bash
-mkdir -p ~/.claude/skills/swift-testing
-cp SKILL.md ~/.claude/skills/swift-testing/
-cp -r references ~/.claude/skills/swift-testing/
+git clone https://github.com/farkasseb/swift-testing-skill ~/.agents/skills/swift-testing
 ```
 
-The skill activates automatically when your conversation involves Swift Testing APIs (`import Testing`, `@Test`, `@Suite`, `#expect`, `#require`, etc.).
-
-### Codex CLI (as agents)
+Claude Code reads `~/.claude/skills`. Clone there, or symlink the copy above:
 
 ```bash
-mkdir -p ~/.agents/skills/swift-testing
-cp SKILL.md ~/.agents/skills/swift-testing/
-cp -r references ~/.agents/skills/swift-testing/
+mkdir -p ~/.claude/skills
+ln -s ~/.agents/skills/swift-testing ~/.claude/skills/swift-testing
 ```
 
-### Other AI tools (as context)
+For a single project, put it in the repository's `.agents/skills/` (Codex) or `.claude/skills/` (Claude Code).
 
-The files are plain markdown — feed them as context to any AI coding assistant. Each reference file is self-contained:
-
-- **Core APIs**: `references/api-reference.md` — `@Test`, `@Suite`, `#expect`, `#require`, `confirmation()`, `withKnownIssue`, exit testing, attachments
-- **Async patterns**: `references/async-and-concurrency.md` — async tests, `confirmation()` deep-dive, serialization scope, `@MainActor`, time limits
-- **Parameterized tests**: `references/parameterized-testing.md` — `arguments:`, zip, Cartesian product, `CustomTestStringConvertible`
-- **Traits and tags**: `references/traits-and-tags.md` — `.serialized`, `.timeLimit`, `.disabled`, `.bug`, `.tags`, custom traits
-- **XCTest migration**: `references/xctest-migration.md` — full assertion mapping table, lifecycle changes, coexistence rules
-
-## File structure
+## Layout
 
 ```
-SKILL.md                              # Router + 15 high-risk mistakes + decision trees + "Doesn't Exist" guards + behavioral rules
-references/
-├── api-reference.md                  # Complete API reference incl. attachments, CustomTestReflectable, repetitions
-├── async-and-concurrency.md          # Async testing patterns
-├── parameterized-testing.md          # Parameterized testing patterns
-├── traits-and-tags.md                # Traits and tagging system
-└── xctest-migration.md               # XCTest migration guide + verified ST-0021 interop matrix
+SKILL.md                                   Target settings, false-pass review, reference routing
+references/modern-apis.md                  Errors, exit tests, attachments, severity, cancellation, scoping and issue-handling traits
+references/concurrency-and-structure.md    Suites and lifecycle, parallelism, confirmation, time limits, skipping, tags, parameterized tests
+references/migration.md                    XCTest migration beyond the assertion mapping, XCTest interop, test plans, verification
+evals/evals.json                           Focused prompts with review expectations
+tests/run.sh                               Verification harness (see below)
 ```
 
-## Sources
+## Verification
 
-Synthesized from primary Apple sources and Swift Evolution proposals:
+`tests/run.sh` runs on the installed release baseline, Xcode 26.6 / Swift 6.3.3, and Xcode 27.1 beta / Swift 6.4. Swift 6.4-only checks are explicitly skipped on 6.3. Select Xcode with `$XCODE` (an `.app` path), `$DEVELOPER_DIR`, or `xcode-select -p`:
 
-- [Swift Testing documentation](https://developer.apple.com/documentation/testing/) — Apple's official framework reference
-- [Meet Swift Testing](https://developer.apple.com/videos/play/wwdc2024/10179/) — WWDC24-10179: introduction to the framework
-- [Go further with Swift Testing](https://developer.apple.com/videos/play/wwdc2024/10195/) — WWDC24-10195: parameterized tests, traits, suites
-- [What's new in Swift Testing](https://developer.apple.com/videos/play/wwdc2025/232/) — WWDC25-232: exit testing, attachments, `@Test(arguments:)` improvements
-- [swift-testing on GitHub](https://github.com/swiftlang/swift-testing) — open-source repository
-- [SE-0429: A new approach to testing in Swift](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0429-swift-testing.md) — Swift Evolution proposal
-- Swift Testing evolution proposals ST-0012 through ST-0024 (full text verified), including [ST-0016 test cancellation](https://github.com/swiftlang/swift-evolution/blob/main/proposals/testing/0016-test-cancellation.md), [ST-0017 image attachment consolidation](https://github.com/swiftlang/swift-evolution/blob/main/proposals/testing/0017-image-attachment-consolidation.md), [ST-0021 XCTest interoperability](https://github.com/swiftlang/swift-evolution/blob/main/proposals/testing/0021-targeted-interoperability-swift-testing-and-xctest.md), [ST-0023 Transferable attachments](https://github.com/swiftlang/swift-evolution/blob/main/proposals/testing/0023-attachments-transferable.md), and [ST-0024 per-test-case repetitions](https://github.com/swiftlang/swift-evolution/blob/main/proposals/testing/0024-per-test-case-repetitions.md)
+```bash
+XCODE=/Applications/Xcode-26.6.0.app TEST_LOG_DIR=/tmp/testing-release tests/run.sh
+XCODE=/Applications/Xcode-27.1.0-Beta.app TEST_LOG_DIR=/tmp/testing-beta tests/run.sh
+```
 
-**Empirical verification (Jul 2026):** version gates and behavioral claims were verified by compiling and running probe packages against Swift 6.3.3 (Xcode 26.6) and Swift 6.4 (Xcode 27 beta 2) — including the ST-0021 interop behavior matrix, which was observed by executing failing XCTAssert calls inside @Test functions under each interop mode, not inferred from proposal text. The deployment floor was read from the shipped Testing.framework binaries (`otool -l` minos): iOS 14+ in Xcode 26.6, raised to iOS 17+ in Xcode 27.
+The suite compiles and runs the executable examples, checks callback timeout/cancellation and per-case scoping, and verifies package interoperability using process status, the named test outcome and runtime warnings. It also checks API/deployment availability in the installed SDK. Some snippets only check compilation; empty example bodies are not evidence of behavior.
+
+The October 2026 audit additionally ran deliberately broken async/callback tests, shared-state suites, parameterized/scoped tests, and iOS simulator interop. Evidence distinguishes initial false passes, actual assertion failures, compiler errors and infrastructure/watchdog failures. A green suite does not prove every possible migration preserves behavior.
+
+Audited libraries: Xcode 26.6 (Swift 6.3.3, Testing 1902) as the release baseline; Xcode 27.1 beta (Swift 6.4, Testing 2084) for the main audit. Xcode 27.0 RC has the same public Testing interfaces. Xcode 27.2 beta 2 reports Testing 2401 with the same public declarations.
 
 ## Evals
 
-`evals/evals.json` contains benchmark prompts with graded assertions. Each targets a knowledge delta where a model with stale training data gives a confidently wrong answer (inventing a `.repeating` trait, claiming XCTAssert-in-@Test works, manual image encoding). Run them by giving each prompt to a model with and without skill access, forbidding web/documentation lookup so the delta measures the skill.
+`evals/evals.json` holds prompts with graded expectations. Most target knowledge that models trained before the 6.3/6.4 releases get confidently wrong; others check migration correctness, behavior preservation, and the keep-XCTest boundary. Run each prompt with and without the skill, with web and documentation lookup disabled, so the difference measures the skill.
+
+## Sources
+
+- [Swift Testing documentation](https://developer.apple.com/documentation/testing/) and [swift-testing on GitHub](https://github.com/swiftlang/swift-testing)
+- [Swift Testing evolution proposals](https://github.com/swiftlang/swift-evolution/tree/main/proposals/testing), ST-0001 through ST-0028
+- [Meet Swift Testing](https://developer.apple.com/videos/play/wwdc2024/10179/) and [Go further with Swift Testing](https://developer.apple.com/videos/play/wwdc2024/10195/) (WWDC24)
 
 ## Contributing
 
-Found an inaccuracy, a missing pattern, or encountered a new mistake AI models make with Swift Testing? PRs welcome. Please include the source (Apple doc URL, Swift Evolution proposal, or your own experience) for any additions.
+PRs are welcome. Include a source (Apple documentation, an evolution proposal, or a reproducible test) for any behavioral claim.
