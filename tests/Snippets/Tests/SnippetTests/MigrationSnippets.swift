@@ -74,10 +74,12 @@ final class ResumeOnce<Value: Sendable>: Sendable {
 
 func expectValid(
     _ order: Order,
-    sourceLocation: SourceLocation = SourceLocation(
-        fileID: #fileID, filePath: #filePath, line: #line, column: #column
-    )
+    fileID: String = #fileID,
+    filePath: String = #filePath,
+    line: Int = #line,
+    column: Int = #column
 ) {
+    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
     #expect(order.total >= 0, sourceLocation: sourceLocation)
     #expect(!order.items.isEmpty, sourceLocation: sourceLocation)
 }

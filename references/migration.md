@@ -1,6 +1,6 @@
 # Migrating from XCTest
 
-Preserve assertion semantics, observation boundaries, and shared-instance sequences. Apple's `modernize-tests` supplies useful mechanical mappings, but its asynchronous `confirmation` rewrite does not wait, and `Codable` alone does not declare `Attachable` conformance. Neither skill replaces checking the actual target's API availability.
+Preserve assertion semantics, observation boundaries, and shared-instance sequences. Apple's `modernize-tests` supplies useful mechanical mappings, but its asynchronous `confirmation` rewrite does not wait, `Codable` alone does not declare `Attachable` conformance, and its `SourceLocation(fileID:filePath:line:column:)` default reports the helper's line instead of the caller's (see [Helper assertions](#helper-assertions)). Neither skill replaces checking the actual target's API availability.
 
 Migrate one class at a time. UI tests and `measure { }` tests stay XCTest. When dropping `import XCTest`, add `import Foundation` if the file uses Foundation types, since XCTest re-exported it.
 
@@ -140,19 +140,23 @@ A timeout throws `CallbackTimedOut`, which fails the test like the XCTest timeou
 
 ## Helper assertions
 
-Forward the caller's location to every `#expect`, `#require`, and `Issue.record` in the helper. Use the public initializer, never `#_sourceLocation`:
+Forward the caller's location to every `#expect`, `#require`, and `Issue.record` in the helper. Take the four parts as separate default parameters and build the `SourceLocation` inside the helper:
 
 ```swift
 func expectValid(
     _ order: Order,
-    sourceLocation: SourceLocation = SourceLocation(
-        fileID: #fileID, filePath: #filePath, line: #line, column: #column
-    )
+    fileID: String = #fileID,
+    filePath: String = #filePath,
+    line: Int = #line,
+    column: Int = #column
 ) {
+    let sourceLocation = SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column)
     #expect(order.total >= 0, sourceLocation: sourceLocation)
     #expect(!order.items.isEmpty, sourceLocation: sourceLocation)
 }
 ```
+
+Never write `sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)`. A magic literal is evaluated at the call site only when it is the whole default value; nested inside a call it is evaluated in the helper, so every failure points at the helper's declaration. `sourceLocation: SourceLocation = #_sourceLocation` is the shorter option: the macro expands at the call site, so it reports the caller, and Testing's own API uses it. It is underscored and not formally supported; its supported replacement, `#Testing::sourceLocation` (ST-0027), is implemented for Swift 6.5, outside the audited 6.3/6.4 libraries. Until then, keep existing uses and write separate defaults in new code.
 
 ## Project-specific XCTest helpers
 

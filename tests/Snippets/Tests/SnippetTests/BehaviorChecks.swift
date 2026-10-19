@@ -82,3 +82,39 @@ let seenDatabases = Locked(Set<Int>())
     let database = try #require(captured.withLock { $0 })
     #expect(database.isDestroyed)
 }
+
+// A helper's location default must be evaluated at the call site.
+func recordWithSeparateDefaults(
+    fileID: String = #fileID,
+    filePath: String = #filePath,
+    line: Int = #line,
+    column: Int = #column
+) {
+    Issue.record("helper", sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+}
+
+func recordWithNestedDefault(
+    sourceLocation: SourceLocation = SourceLocation(fileID: #fileID, filePath: #filePath, line: #line, column: #column)
+) {
+    Issue.record("helper", sourceLocation: sourceLocation)
+}
+
+func recordWithMacroDefault(sourceLocation: SourceLocation = #_sourceLocation) {
+    Issue.record("helper", sourceLocation: sourceLocation)
+}
+
+@Suite struct HelperSourceLocationBehavior {
+    // Each row calls its helper on the line it records.
+    static let helpers: [(name: String, callerLine: Int, reportsCaller: Bool, record: @Sendable () -> Void)] = [
+        ("separate defaults", #line, true, { recordWithSeparateDefaults() }),
+        ("nested SourceLocation default", #line, false, { recordWithNestedDefault() }),
+        ("#_sourceLocation", #line, true, { recordWithMacroDefault() }),
+    ]
+
+    @Test(arguments: helpers)
+    func reportsTheCallerLineOnlyFromCallSiteDefaults(
+        name: String, callerLine: Int, reportsCaller: Bool, record: @Sendable () -> Void
+    ) {
+        withKnownIssue { record() } matching: { ($0.sourceLocation?.line == callerLine) == reportsCaller }
+    }
+}
