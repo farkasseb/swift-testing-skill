@@ -1,5 +1,6 @@
 // Samples from references/migration.md.
 import Foundation
+import os
 import Testing
 
 struct CallbackTimedOut: Error {}
@@ -24,35 +25,35 @@ func awaitCallback<Value: Sendable>(
     }
 }
 
-final class ResumeOnce<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, any Error>?
-    private var early: Result<Value, any Error>?
-    private var finished = false
+final class ResumeOnce<Value: Sendable>: Sendable {
+    private struct State {
+        var continuation: CheckedContinuation<Value, any Error>?
+        var early: Result<Value, any Error>?
+        var finished = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     func install(_ continuation: CheckedContinuation<Value, any Error>) {
-        lock.lock()
-        if let early {
-            lock.unlock()
-            continuation.resume(with: early)   // cancelled or timed out first
-        } else {
-            self.continuation = continuation
-            lock.unlock()
+        let early = state.withLock { state in
+            if state.early == nil { state.continuation = continuation }
+            return state.early
         }
+        if let early { continuation.resume(with: early) }   // cancelled or timed out first
     }
 
     func resume(with result: Result<Value, any Error>) {
-        lock.lock()
-        guard !finished else { lock.unlock(); return }   // later calls are ignored
-        finished = true
-        if let continuation {
-            self.continuation = nil
-            lock.unlock()
-            continuation.resume(with: result)
-        } else {
-            early = result
-            lock.unlock()
+        let continuation = state.withLock { state -> CheckedContinuation<Value, any Error>? in
+            guard !state.finished else { return nil }   // later calls are ignored
+            state.finished = true
+            guard let continuation = state.continuation else {
+                state.early = result
+                return nil
+            }
+            state.continuation = nil
+            return continuation
         }
+        continuation?.resume(with: result)
     }
 }
 

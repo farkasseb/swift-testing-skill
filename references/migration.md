@@ -51,7 +51,7 @@ XCTest stopped at the first failure. Every later assertion in that scope becomes
 The usual XCTest shape (call the SUT, assert inside the callback, fulfill, wait with a timeout) becomes "await the result with the same timeout, then assert outside the callback". Keep the bound. A bare `withCheckedContinuation` waits forever if the callback never fires, and `.timeLimit` only requests cancellation, which does not resume a continuation. Swift Testing has no built-in bounded wait, so add a small adapter to the test target that resumes exactly once, on the first callback, on timeout, or on cancellation:
 
 ```swift
-import Foundation
+import os
 
 struct CallbackTimedOut: Error {}
 
@@ -75,35 +75,35 @@ func awaitCallback<Value: Sendable>(
     }
 }
 
-final class ResumeOnce<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, any Error>?
-    private var early: Result<Value, any Error>?
-    private var finished = false
+final class ResumeOnce<Value: Sendable>: Sendable {
+    private struct State {
+        var continuation: CheckedContinuation<Value, any Error>?
+        var early: Result<Value, any Error>?
+        var finished = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     func install(_ continuation: CheckedContinuation<Value, any Error>) {
-        lock.lock()
-        if let early {
-            lock.unlock()
-            continuation.resume(with: early)   // cancelled or timed out first
-        } else {
-            self.continuation = continuation
-            lock.unlock()
+        let early = state.withLock { state in
+            if state.early == nil { state.continuation = continuation }
+            return state.early
         }
+        if let early { continuation.resume(with: early) }   // cancelled or timed out first
     }
 
     func resume(with result: Result<Value, any Error>) {
-        lock.lock()
-        guard !finished else { lock.unlock(); return }   // later calls are ignored
-        finished = true
-        if let continuation {
-            self.continuation = nil
-            lock.unlock()
-            continuation.resume(with: result)
-        } else {
-            early = result
-            lock.unlock()
+        let continuation = state.withLock { state -> CheckedContinuation<Value, any Error>? in
+            guard !state.finished else { return nil }   // later calls are ignored
+            state.finished = true
+            guard let continuation = state.continuation else {
+                state.early = result
+                return nil
+            }
+            state.continuation = nil
+            return continuation
         }
+        continuation?.resume(with: result)
     }
 }
 ```
@@ -124,7 +124,7 @@ let result = try await awaitCallback(timeout: .seconds(10)) { done in
 #expect(try result.get() == 42)
 ```
 
-A timeout throws `CallbackTimedOut`, which fails the test like the XCTest timeout did. This adapter bounds the wait, not the lifetime of the underlying operation. `start` must return promptly; cancel or unregister the operation separately if it can outlive the test. A second callback is ignored instead of crashing, so this is not an exactly-once assertion. If the original expectation checked over-fulfillment, retain a separate count and await the operation's completion boundary before checking it. If you cannot add a helper like this, keep the test in XCTest rather than drop the bound.
+A timeout throws `CallbackTimedOut`, which fails the test like the XCTest timeout did. `OSAllocatedUnfairLock` (iOS 16, macOS 13) keeps `ResumeOnce` checked `Sendable`, with no `@unchecked`; on Linux, or with an iOS 18 / macOS 15 floor, `Mutex` from `Synchronization` does the same. This adapter bounds the wait, not the lifetime of the underlying operation. `start` must return promptly; cancel or unregister the operation separately if it can outlive the test. A second callback is ignored instead of crashing, so this is not an exactly-once assertion. If the original expectation checked over-fulfillment, retain a separate count and await the operation's completion boundary before checking it. If you cannot add a helper like this, keep the test in XCTest rather than drop the bound.
 
 - Multi-shot callbacks (observers, progress): collect values into a local array, await the SUT's own completion point, then assert the count and values.
 - `waitForExpectations(timeout: 0)` asserted that the callback ran synchronously. Keep that: store into a local optional and `try #require` it right after the call, with no continuation.
